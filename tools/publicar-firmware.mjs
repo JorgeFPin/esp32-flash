@@ -1,80 +1,74 @@
 #!/usr/bin/env node
-// Publica uma nova versão de firmware no catálogo do "ESP32 Flash via WEB".
+// Publica uma nova versão de firmware no "ESP32 Flash via WEB".
 //
-// Exemplo (Windows / macOS / Linux, precisa do Node.js 18+):
-//   node tools/publicar-firmware.mjs --produto intelitherm --nome "InteliTherm" \
-//        --versao 1.2.0 --notas "Correções de estabilidade" \
+// Firmware PÚBLICO (qualquer pessoa com o link pode instalar):
+//   node tools/publicar-firmware.mjs --produto termostato --nome "Termostato" --versao 1.2.0 \
 //        --esp32 C:\caminho\sketch.ino.merged.bin --esp32s3 C:\caminho\sketch_s3.ino.merged.bin
 //
-// Copia os .bin para docs/firmware/<produto>/<versao>/, calcula MD5/tamanho e põe a
-// versão no topo de docs/firmware/catalog.json (a primeira versão da lista é a "última").
-// Depois é só fazer commit + push.
+// Firmware de um CLIENTE (cifrado; só abre com o link/código desse cliente):
+//   node tools/publicar-firmware.mjs --cliente "Hotel Sol" --produto termostato --nome "Termostato" \
+//        --versao 1.2.0 --esp32 C:\caminho\sketch.ino.merged.bin
+//
+// Ver MANUAL.md para o processo completo.
 
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { analyzeFirmware } from "../docs/js/binparse.js";
-import { md5 } from "../docs/js/md5.js";
-
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const FW_DIR = path.join(ROOT, "docs", "firmware");
-const CATALOG = path.join(FW_DIR, "catalog.json");
-
-const CHIP_FLAGS = {
-  esp32: "ESP32",
-  esp32s3: "ESP32-S3",
-  esp32s2: "ESP32-S2",
-  esp32c3: "ESP32-C3",
-  esp32c6: "ESP32-C6",
-};
+import zlib from "node:zlib";
+import {
+  FW_DIR,
+  parseArgs,
+  fail,
+  checkFirmware,
+  readPublicCatalog,
+  writePublicCatalog,
+  loadSecrets,
+  findClient,
+  readClientCatalog,
+  writeClientCatalog,
+  clientDir,
+  relFw,
+  encryptFile,
+  link,
+  assertSecretsNotTracked,
+} from "./lib.mjs";
 
 function usage(msg) {
   if (msg) console.error("Erro: " + msg + "\n");
   console.error(`Utilização:
-  node tools/publicar-firmware.mjs --produto <id> --versao <x.y.z> [--nome "Nome"] [--descricao "..."]
-       [--notas "..."] [--data AAAA-MM-DD] [--manter-dados nao] [--substituir]
-       --esp32 <ficheiro.bin> [--esp32s3 <ficheiro.bin>] ...
+  node tools/publicar-firmware.mjs --produto <id> --versao <x.y.z> [--cliente "<nome ou id>"]
+       [--nome "Nome"] [--descricao "..."] [--notas "..."] [--data AAAA-MM-DD]
+       [--manter-dados nao] [--substituir]
+       --esp32 <ficheiro.merged.bin> [--esp32s3 <ficheiro.merged.bin>] ...
 
-  --produto       identificador usado no link (?produto=<id>), só letras minúsculas, números e "-"
+  --cliente       publica cifrado, só para esse cliente (criar antes com: node tools/clientes.mjs novo)
+                  sem --cliente o firmware fica público
+  --produto       identificador do produto (letras minúsculas, números e "-"), usado no link
   --versao        versão a publicar (ex.: 1.2.0)
   --nome          nome mostrado ao cliente (obrigatório na 1.ª publicação do produto)
   --descricao     descrição curta do produto
   --notas         notas desta versão (mostradas ao cliente)
+  --data          data da versão (por defeito, hoje)
   --manter-dados  "nao" obriga a apagar as definições guardadas na placa ao instalar esta versão
   --substituir    permite substituir uma versão já publicada
-  --esp32, --esp32s3, --esp32s2, --esp32c3, --esp32c6   ficheiro .merged.bin para cada chip`);
+  --esp32, --esp32s3, --esp32s2, --esp32c3, --esp32c6   ficheiro .merged.bin de cada chip`);
   process.exit(1);
 }
 
-function parseArgs(argv) {
-  const a = { files: {} };
-  for (let i = 0; i < argv.length; i++) {
-    const k = argv[i];
-    if (!k.startsWith("--")) usage(`argumento inesperado "${k}"`);
-    const key = k.slice(2);
-    if (key === "substituir") {
-      a.substituir = true;
-      continue;
-    }
-    if (key === "ajuda" || key === "help") usage();
-    const v = argv[++i];
-    if (v === undefined) usage(`falta o valor de ${k}`);
-    if (CHIP_FLAGS[key]) a.files[CHIP_FLAGS[key]] = v;
-    else a[key] = v;
-  }
-  return a;
-}
-
-const args = parseArgs(process.argv.slice(2));
+const args = parseArgs(process.argv.slice(2), ["substituir", "ajuda", "help"]);
+if (args.ajuda || args.help) usage();
+if (args._.length) usage(`argumento inesperado "${args._[0]}"`);
 if (!args.produto || !/^[a-z0-9][a-z0-9-]*$/.test(args.produto)) usage("--produto inválido ou em falta");
 if (!args.versao || !/^[0-9A-Za-z.+-]+$/.test(args.versao)) usage("--versao inválida ou em falta");
 if (!Object.keys(args.files).length) usage("indique pelo menos um ficheiro (--esp32 / --esp32s3 …)");
 
-const catalog = fs.existsSync(CATALOG)
-  ? JSON.parse(fs.readFileSync(CATALOG, "utf8"))
-  : { produtos: [] };
-catalog.produtos = catalog.produtos || [];
+// Cliente (opcional)
+let client = null;
+if (args.cliente) {
+  assertSecretsNotTracked();
+  client = findClient(loadSecrets(), args.cliente);
+}
 
+const catalog = client ? await readClientCatalog(client) : readPublicCatalog();
 let product = catalog.produtos.find((p) => p.id === args.produto);
 if (!product) {
   if (!args.nome) usage(`o produto "${args.produto}" é novo: indique --nome`);
@@ -90,53 +84,39 @@ if (existing >= 0 && !args.substituir) {
   usage(`a versão ${args.versao} de ${args.produto} já existe (use --substituir para a substituir)`);
 }
 
-const destDir = path.join(FW_DIR, args.produto, args.versao);
-
-const ficheiros = {};
-const toWrite = [];
+// Valida todos os ficheiros antes de escrever o que quer que seja.
+const destDir = client
+  ? path.join(clientDir(client), args.produto, args.versao)
+  : path.join(FW_DIR, args.produto, args.versao);
+const checked = [];
 let failed = false;
 for (const [chip, src] of Object.entries(args.files)) {
-  if (!fs.existsSync(src)) {
-    console.error(`✕ ${chip}: ficheiro não encontrado: ${src}`);
+  const r = checkFirmware(chip, src);
+  if (r.error) {
+    console.error("✕ " + r.error);
     failed = true;
     continue;
   }
-  const bytes = new Uint8Array(fs.readFileSync(src));
-  const info = analyzeFirmware(bytes);
-  if (!info.ok) {
-    console.error(`✕ ${chip}: ${path.basename(src)} não é válido:\n   - ${info.errors.join("\n   - ")}`);
-    failed = true;
-    continue;
-  }
-  if (info.chip !== chip) {
-    console.error(`✕ ${chip}: ${path.basename(src)} foi compilado para ${info.chip}, não para ${chip}.`);
-    failed = true;
-    continue;
-  }
-  if (info.kind !== "merged") {
-    console.error(
-      `✕ ${chip}: ${path.basename(src)} contém só a aplicação. Use o ficheiro .merged.bin ` +
-        "(Arduino IDE: Sketch → Exportar binário compilado)."
-    );
-    failed = true;
-    continue;
-  }
-  const name = `${args.produto}-v${args.versao}-${chip.toLowerCase().replace(/-/g, "")}.bin`;
-  toWrite.push({ name, bytes });
-  ficheiros[chip] = {
-    ficheiro: `${args.produto}/${args.versao}/${name}`,
-    tamanho: bytes.length,
-    md5: md5(bytes),
-  };
-  console.log(`✓ ${chip}: ${path.basename(src)} → docs/firmware/${ficheiros[chip].ficheiro} (${(bytes.length / 1024).toFixed(0)} KB, flash ${info.flashSize})`);
+  const name = `${args.produto}-v${args.versao}-${chip.toLowerCase().replace(/-/g, "")}.bin${client ? ".enc" : ""}`;
+  checked.push({ chip, src, name, ...r });
 }
 if (failed) {
-  console.error("\nNada foi publicado no catálogo. Corrija os erros acima e repita.");
+  console.error("\nNada foi publicado. Corrija os erros acima e repita.");
   process.exit(1);
 }
 
 fs.mkdirSync(destDir, { recursive: true });
-for (const f of toWrite) fs.writeFileSync(path.join(destDir, f.name), f.bytes);
+const ficheiros = {};
+for (const f of checked) {
+  const abs = path.join(destDir, f.name);
+  const rel = relFw(abs);
+  // Firmware de cliente: comprimido (gzip) e depois cifrado.
+  const data = client ? await encryptFile(client.chave, rel, zlib.gzipSync(f.bytes, { level: 9 })) : f.bytes;
+  fs.writeFileSync(abs, data);
+  ficheiros[f.chip] = { ficheiro: rel, tamanho: f.bytes.length, md5: f.md5 };
+  const size = client ? `${(f.bytes.length / 1024).toFixed(0)} KB → ${(data.length / 1024).toFixed(0)} KB comprimido e cifrado` : `${(f.bytes.length / 1024).toFixed(0)} KB`;
+  console.log(`✓ ${f.chip}: ${path.basename(f.src)} → docs/firmware/${rel} (${size}, flash ${f.info.flashSize})`);
+}
 
 const release = {
   versao: args.versao,
@@ -145,11 +125,17 @@ const release = {
   ficheiros,
 };
 if (args["manter-dados"] && /^(nao|não|no|false|0)$/i.test(args["manter-dados"])) release.manterDados = false;
-
 if (existing >= 0) product.versoes.splice(existing, 1);
 product.versoes.unshift(release);
 
-fs.writeFileSync(CATALOG, JSON.stringify(catalog, null, 2) + "\n");
-console.log(`\n✓ ${product.nome} v${args.versao} publicado em docs/firmware/catalog.json`);
-console.log(`  Link para clientes: <endereço do site>/?produto=${args.produto}`);
-console.log("  Falta: git add docs/firmware && git commit -m \"Firmware ...\" && git push");
+if (client) {
+  await writeClientCatalog(client, catalog);
+  console.log(`\n✓ ${product.nome} v${args.versao} publicado para o cliente "${client.nome}" (docs/firmware/clientes/${client.id}/)`);
+  console.log(`\n  Link para enviar ao cliente (contém a chave — envie só a este cliente):`);
+  console.log(`  ${link({ cliente: client.id, produto: product.id, chave: client.chave })}`);
+} else {
+  writePublicCatalog(catalog);
+  console.log(`\n✓ ${product.nome} v${args.versao} publicado (público) em docs/firmware/catalog.json`);
+  console.log(`\n  Link: ${link({ produto: product.id })}`);
+}
+console.log(`\n  Falta enviar para o GitHub:\n  git add docs/firmware && git commit -m "${product.nome} v${args.versao}" && git push`);

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "publicar": "node tools/publicar-firmware.mjs"
+    "publicar": "node tools/publicar-firmware.mjs",
+    "clientes": "node tools/clientes.mjs"
   }
 }

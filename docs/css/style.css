@@ -167,6 +167,7 @@ details.parts-details summary { cursor: pointer; color: var(--muted); }
   font: inherit; font-weight: 600; color: var(--text);
   background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px;
   padding: 9px 16px; cursor: pointer; transition: background .15s, border-color .15s, opacity .15s;
+  text-decoration: none;
 }
 .btn svg { width: 18px; height: 18px; }
 .btn:hover:not(:disabled) { border-color: var(--accent); }
@@ -278,3 +279,15 @@ details > summary { cursor: pointer; font-weight: 600; }
   .kv { grid-template-columns: 1fr; gap: 0; }
   .kv dd { margin-bottom: 6px; }
 }
+
+/* Modo cliente: acesso protegido */
+body.locked #steps,
+body.locked #advanced,
+body.locked #monitorCard,
+body.locked #logCard,
+body.locked #productBanner { display: none !important; }
+.access-head { display: flex; gap: 14px; align-items: flex-start; }
+.access-head svg { width: 34px; height: 34px; color: var(--accent); flex: none; margin-top: 2px; }
+.access-head h2 { margin: 0 0 2px; }
+.access-head p { margin: 0; }
+.access-input { flex: 1 1 320px; min-width: 0; font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; }

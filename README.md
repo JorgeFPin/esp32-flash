@@ -25,6 +25,20 @@ Outras opções do link: `&versao=1.0.0` (uma versão específica).
 Exemplo incluído: produto `demo` → `?produto=demo` (firmware de teste que pisca o LED e escreve no
 monitor série a 115200; código em [`exemplos/demo-flash-web/`](exemplos/demo-flash-web/)).
 
+### Firmware protegido por cliente
+
+Os firmwares de um cliente podem ser publicados **cifrados** (AES-256) com uma chave própria desse cliente.
+Só abrem com o link (ou código de acesso) desse cliente, e um cliente não consegue abrir os de outro:
+
+```bash
+node tools/clientes.mjs novo --nome "Hotel Sol"
+node tools/publicar-firmware.mjs --cliente "Hotel Sol" --produto termostato --nome "Termostato" --versao 1.0.0 --esp32 sketch.ino.merged.bin
+git add docs/firmware && git commit -m "Hotel Sol: termostato v1.0.0" && git push
+```
+
+As chaves ficam em `segredos/clientes.json`, só no seu PC (nunca vão para o GitHub).
+**Processo completo, passo a passo: [MANUAL.md](MANUAL.md).**
+
 ### Proteções contra erros
 
 - Analisa o `.bin` antes de gravar: identifica o chip a que se destina, se é o ficheiro completo

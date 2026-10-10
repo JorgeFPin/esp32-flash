@@ -12,6 +12,7 @@ import {
   samePartitions,
 } from "./binparse.js";
 import { md5 } from "./md5.js";
+import { chaveValida, decifrar, decifrarJSON, contextoCatalogo, contextoFicheiro } from "./cifra.js";
 
 // Adaptadores USB-série habituais em placas ESP32 (usados como filtro na escolha da porta).
 const USB_FILTERS = [
@@ -70,6 +71,13 @@ const el = {
   btnCopyLog: $("btnCopyLog"),
   btnClearLog: $("btnClearLog"),
   productsCard: $("productsCard"),
+  productsTitle: $("productsTitle"),
+  productsIntro: $("productsIntro"),
+  pbEyebrow: $("pbEyebrow"),
+  accessCard: $("accessCard"),
+  accessForm: $("accessForm"),
+  accessCode: $("accessCode"),
+  accessMsg: $("accessMsg"),
   productList: $("productList"),
 };
 
@@ -88,6 +96,7 @@ const state = {
   catalogMode: false,
   product: null,
   release: null,
+  client: null, // { id, key, nome } no modo cliente
 };
 
 // ---------------------------------------------------------------- utilitários
@@ -764,6 +773,10 @@ async function resetBoard() {
 }
 
 // ---------------------------------------------------------------- catálogo de firmwares
+//
+// Público:  ?produto=<id>                       → docs/firmware/catalog.json
+// Cliente:  ?c=<cliente>&produto=<id>#k=<chave>  → docs/firmware/clientes/<cliente>/catalogo.enc (cifrado)
+// A chave vai depois do "#": o browser nunca a envia ao servidor.
 
 const CATALOG_URL = "firmware/catalog.json";
 
@@ -773,28 +786,143 @@ function catalogFileUrl(path) {
 
 function productLink(id) {
   const u = new URL(location.href);
-  u.search = "?produto=" + encodeURIComponent(id);
-  u.hash = "";
+  const q = new URLSearchParams();
+  if (state.client) q.set("c", state.client.id);
+  q.set("produto", id);
+  u.search = "?" + q.toString();
+  u.hash = state.client ? "k=" + state.client.key : "";
   return u.href;
+}
+
+/** Descarrega um ficheiro (Uint8Array), com progresso opcional. */
+async function fetchBytes(url, onProgress) {
+  const r = await fetch(url, { cache: "no-cache" });
+  if (!r.ok) {
+    const e = new Error(`HTTP ${r.status}`);
+    e.status = r.status;
+    throw e;
+  }
+  const total = parseInt(r.headers.get("content-length") || "0", 10);
+  const chunks = [];
+  let got = 0;
+  const reader = r.body.getReader();
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    got += value.length;
+    if (onProgress && total) onProgress(got / total);
+  }
+  const bytes = new Uint8Array(got);
+  let o = 0;
+  for (const c of chunks) {
+    bytes.set(c, o);
+    o += c.length;
+  }
+  return bytes;
+}
+
+async function gunzip(bytes) {
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+/** Bloqueia a página (só mostra o pedido de código ou a lista de firmwares do cliente). */
+function lockPage(locked) {
+  document.body.classList.toggle("locked", locked);
+}
+
+function showAccessForm(errorHtml) {
+  lockPage(true);
+  el.accessCard.hidden = false;
+  setMsg(el.accessMsg, errorHtml ? "error" : null, errorHtml || "");
+  el.accessCode.focus();
+}
+
+/** Abre o catálogo cifrado de um cliente. Devolve null (e mostra a mensagem) se não for possível. */
+async function openClientCatalog(cid) {
+  if (!/^[a-z0-9-]{3,40}$/.test(cid)) {
+    showAccessForm("Este link não é válido. Confirme que o copiou completo.");
+    el.accessForm.hidden = true;
+    return null;
+  }
+  const key = new URLSearchParams(location.hash.slice(1)).get("k");
+  if (!key) {
+    showAccessForm(null);
+    return null;
+  }
+  if (!chaveValida(key)) {
+    showAccessForm("O código de acesso não está completo ou tem um erro. Confirme que o copiou todo (43 caracteres).");
+    return null;
+  }
+  let blob;
+  try {
+    blob = await fetchBytes(`firmware/clientes/${cid}/catalogo.enc`);
+  } catch (e) {
+    lockPage(true);
+    el.accessCard.hidden = false;
+    el.accessForm.hidden = true;
+    setMsg(
+      el.accessMsg,
+      "error",
+      e.status === 404
+        ? "<b>Este link já não é válido ou o acesso foi removido.</b><p>Contacte quem lhe enviou o link.</p>"
+        : `<b>Não foi possível abrir a lista de firmwares.</b> Verifique a ligação à Internet e recarregue a página.<p class="muted small">Detalhe: ${escapeHtml(errText(e))}</p>`
+    );
+    return null;
+  }
+  try {
+    const catalog = await decifrarJSON(key, blob, contextoCatalogo(cid));
+    state.client = { id: cid, key, nome: catalog.cliente || "" };
+    log(`Acesso de cliente aberto${state.client.nome ? ": " + state.client.nome : ""}.`, "ok");
+    return catalog;
+  } catch (e) {
+    showAccessForm(
+      e.chaveErrada
+        ? "<b>Código de acesso errado.</b> Confirme o código ou use o link exatamente como o recebeu."
+        : escapeHtml(errText(e))
+    );
+    return null;
+  }
 }
 
 async function initCatalog() {
   const params = new URLSearchParams(location.search);
-  const pid = params.get("produto") || params.get("p");
+  let pid = params.get("produto") || params.get("p");
+  const cid = params.get("c");
   let catalog = null;
-  try {
-    const r = await fetch(CATALOG_URL, { cache: "no-cache" });
-    if (r.ok) catalog = await r.json();
-  } catch (e) {
-    /* sem catálogo (ex.: página aberta localmente) */
+
+  if (cid) {
+    catalog = await openClientCatalog(cid);
+    if (!catalog) return;
+  } else {
+    try {
+      const r = await fetch(CATALOG_URL, { cache: "no-cache" });
+      if (r.ok) catalog = await r.json();
+    } catch (e) {
+      /* sem catálogo (ex.: página aberta localmente) */
+    }
   }
 
+  const products = ((catalog && catalog.produtos) || []).filter((p) => p.versoes && p.versoes.length);
   if (!pid) {
-    if (catalog) renderProductList(catalog);
-    return;
+    if (cid && products.length === 1) {
+      pid = products[0].id;
+    } else {
+      if (cid) {
+        lockPage(true);
+        el.productsTitle.textContent = state.client.nome ? `Firmwares de ${state.client.nome}` : "Os seus firmwares";
+        el.productsIntro.textContent = products.length
+          ? "Escolha o firmware a instalar."
+          : "Ainda não há firmwares disponíveis para si.";
+        el.productsCard.hidden = false;
+      }
+      if (products.length) renderProductList(products);
+      return;
+    }
   }
-  const product = catalog && (catalog.produtos || []).find((p) => p.id === pid);
-  if (!product || !product.versoes || !product.versoes.length) {
+  const product = products.find((p) => p.id === pid);
+  if (!product) {
     setMsg(el.connectMsg, "error", `O produto <b>${escapeHtml(pid)}</b> não foi encontrado no catálogo de firmwares.`);
     return;
   }
@@ -813,6 +941,8 @@ function enterCatalogMode(product, release) {
   state.release = release;
   document.title = `${product.nome} · ESP32 Flash via WEB`;
 
+  el.pbEyebrow.textContent =
+    "Atualização de firmware" + (state.client && state.client.nome ? " · " + state.client.nome : "");
   el.pbName.textContent = product.nome;
   el.pbDesc.textContent = product.descricao || "";
   el.pbVersion.textContent = "v" + release.versao;
@@ -851,29 +981,19 @@ async function loadCatalogBuild(chip) {
     return;
   }
   const file = typeof entry === "string" ? { ficheiro: entry } : entry;
-  const url = catalogFileUrl(file.ficheiro);
-  const name = file.ficheiro.split("/").pop();
+  const encrypted = /\.enc$/.test(file.ficheiro);
+  const name = file.ficheiro.split("/").pop().replace(/\.enc$/, "");
   log(`A descarregar ${name}…`);
   el.catalogFwText.innerHTML = `A descarregar <b>${escapeHtml(name)}</b>…`;
   try {
-    const r = await fetch(url, { cache: "no-cache" });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const total = parseInt(r.headers.get("content-length") || "0", 10) || file.tamanho || 0;
-    const chunks = [];
-    let got = 0;
-    const reader = r.body.getReader();
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      got += value.length;
-      if (total) el.catalogFwText.innerHTML = `A descarregar <b>${escapeHtml(name)}</b>… ${Math.min(100, Math.round((got / total) * 100))}%`;
-    }
-    const bytes = new Uint8Array(got);
-    let o = 0;
-    for (const c of chunks) {
-      bytes.set(c, o);
-      o += c.length;
+    let bytes = await fetchBytes(catalogFileUrl(file.ficheiro), (f) => {
+      el.catalogFwText.innerHTML = `A descarregar <b>${escapeHtml(name)}</b>… ${Math.min(100, Math.round(f * 100))}%`;
+    });
+    if (encrypted) {
+      if (!state.client) throw new Error("firmware protegido: falta o código de acesso");
+      bytes = await decifrar(state.client.key, bytes, contextoFicheiro(file.ficheiro));
+      if (bytes[0] === 0x1f && bytes[1] === 0x8b) bytes = await gunzip(bytes);
+      log("Firmware decifrado.", "ok");
     }
     if (file.tamanho && bytes.length !== file.tamanho) {
       throw new Error(`tamanho inesperado (${bytes.length} em vez de ${file.tamanho} bytes)`);
@@ -895,19 +1015,20 @@ async function loadCatalogBuild(chip) {
   }
 }
 
-function renderProductList(catalog) {
-  const products = (catalog.produtos || []).filter((p) => p.versoes && p.versoes.length);
-  if (!products.length) return;
+function renderProductList(products) {
+  const forClient = !!state.client;
   el.productList.innerHTML = products
     .map((p) => {
       const v = p.versoes[0];
       const chips = Object.keys(v.ficheiros || {});
+      const href = escapeHtml(productLink(p.id));
       return (
         `<div class="product-item"><div><h3>${escapeHtml(p.nome)} <span class="muted small">v${escapeHtml(v.versao)}${v.data ? " · " + escapeHtml(v.data) : ""}</span></h3>` +
         (p.descricao ? `<p class="muted small">${escapeHtml(p.descricao)}</p>` : "") +
         `<p>${chips.map((c) => `<span class="tag">${escapeHtml(c)}</span>`).join("")}</p></div>` +
-        `<div class="row tight"><a class="btn btn-sm btn-primary" href="${escapeHtml(productLink(p.id))}">Abrir instalador</a>` +
-        `<button class="btn btn-sm" type="button" data-copy="${escapeHtml(productLink(p.id))}">Copiar link</button></div></div>`
+        `<div class="row tight"><a class="btn btn-sm btn-primary" href="${href}">${forClient ? "Instalar" : "Abrir instalador"}</a>` +
+        (forClient ? "" : `<button class="btn btn-sm" type="button" data-copy="${href}">Copiar link</button>`) +
+        `</div></div>`
       );
     })
     .join("");
@@ -936,6 +1057,16 @@ function bindEvents() {
   );
   el.dropzone.addEventListener("drop", (e) => loadLocalFile(e.dataTransfer.files[0]));
 
+  el.accessForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const code = el.accessCode.value.replace(/\s+/g, "");
+    if (!chaveValida(code)) {
+      setMsg(el.accessMsg, "error", "O código deve ter 43 caracteres (letras, números, - e _). Confirme que o copiou todo.");
+      return;
+    }
+    location.hash = "k=" + code;
+    location.reload();
+  });
   el.btnConnect.addEventListener("click", connect);
   el.btnDisconnect.addEventListener("click", disconnect);
   el.btnFlash.addEventListener("click", flash);

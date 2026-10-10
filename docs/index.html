@@ -6,6 +6,7 @@
   <title>ESP32 Flash via WEB · by Jorge Pinheiro</title>
   <meta name="description" content="Gravar firmware (.bin) em ESP32 e ESP32-S3 diretamente no browser, sem instalar nada.">
   <meta name="author" content="Jorge Pinheiro">
+  <meta name="referrer" content="no-referrer">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='6' y='6' width='20' height='20' rx='3' fill='%230e7490'/%3E%3Cpath d='M10 2v4M16 2v4M22 2v4M10 26v4M16 26v4M22 26v4M2 10h4M2 16h4M2 22h4M26 10h4M26 16h4M26 22h4' stroke='%230e7490' stroke-width='2'/%3E%3Cpath d='M17 10l-5 7h4l-1 5 5-7h-4z' fill='%23fff'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="css/style.css">
 </head>
@@ -34,9 +35,24 @@
       Firefox, Safari e telemóveis não são suportados.
     </div>
 
+    <section class="card access-card" id="accessCard" hidden>
+      <div class="access-head">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 10V7a4 4 0 018 0v3" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+        <div>
+          <h2>Firmware protegido</h2>
+          <p class="muted">Introduza o código de acesso que recebeu juntamente com o link.</p>
+        </div>
+      </div>
+      <form id="accessForm" class="row" autocomplete="off">
+        <input type="text" id="accessCode" class="access-input" placeholder="Código de acesso (43 caracteres)" spellcheck="false" autocapitalize="off" aria-label="Código de acesso">
+        <button class="btn btn-primary" type="submit">Continuar</button>
+      </form>
+      <div id="accessMsg" class="msg" hidden></div>
+    </section>
+
     <section id="productBanner" class="product-banner" hidden>
       <div>
-        <p class="eyebrow">Atualização de firmware</p>
+        <p class="eyebrow" id="pbEyebrow">Atualização de firmware</p>
         <h2 id="pbName">—</h2>
         <p id="pbDesc" class="muted"></p>
       </div>
@@ -189,7 +205,7 @@
       <pre id="monitorOut" class="console" aria-live="off"></pre>
     </section>
 
-    <section class="card">
+    <section class="card" id="logCard">
       <div class="card-head">
         <h2>Registo</h2>
         <div class="row tight">
@@ -201,8 +217,8 @@
     </section>
 
     <section class="card" id="productsCard" hidden>
-      <div class="card-head"><h2>Firmwares disponíveis</h2></div>
-      <p class="muted">Cada produto tem um link próprio. Quem o abre só precisa de escolher a porta COM, e a última versão é instalada automaticamente.</p>
+      <div class="card-head"><h2 id="productsTitle">Firmwares disponíveis</h2></div>
+      <p class="muted" id="productsIntro">Cada produto tem um link próprio. Quem o abre só precisa de escolher a porta COM, e a última versão é instalada automaticamente.</p>
       <div id="productList" class="product-list"></div>
     </section>
 
