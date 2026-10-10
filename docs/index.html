@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="pt-PT">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ESP32 Flash via WEB · by Jorge Pinheiro</title>
+  <meta name="description" content="Gravar firmware (.bin) em ESP32 e ESP32-S3 diretamente no browser, sem instalar nada.">
+  <meta name="author" content="Jorge Pinheiro">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='6' y='6' width='20' height='20' rx='3' fill='%230e7490'/%3E%3Cpath d='M10 2v4M16 2v4M22 2v4M10 26v4M16 26v4M22 26v4M2 10h4M2 16h4M2 22h4M26 10h4M26 16h4M26 22h4' stroke='%230e7490' stroke-width='2'/%3E%3Cpath d='M17 10l-5 7h4l-1 5 5-7h-4z' fill='%23fff'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <svg class="brand-icon" viewBox="0 0 32 32" aria-hidden="true">
+          <rect x="6" y="6" width="20" height="20" rx="3" fill="currentColor"/>
+          <path d="M10 2v4M16 2v4M22 2v4M10 26v4M16 26v4M22 26v4M2 10h4M2 16h4M2 22h4M26 10h4M26 16h4M26 22h4" stroke="currentColor" stroke-width="2"/>
+          <path d="M17 10l-5 7h4l-1 5 5-7h-4z" fill="var(--surface)"/>
+        </svg>
+        <div>
+          <h1>ESP32 Flash via WEB</h1>
+          <p class="byline">by Jorge Pinheiro</p>
+        </div>
+      </div>
+      <span class="chip-badges"><span>ESP32</span><span>ESP32-S3</span></span>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div id="unsupported" class="alert alert-error" hidden>
+      <strong>Este browser não permite aceder à porta série (COM).</strong>
+      Abra esta página no <b>Google Chrome</b> ou no <b>Microsoft Edge</b> num computador (Windows, macOS ou Linux).
+      Firefox, Safari e telemóveis não são suportados.
+    </div>
+
+    <section id="productBanner" class="product-banner" hidden>
+      <div>
+        <p class="eyebrow">Atualização de firmware</p>
+        <h2 id="pbName">—</h2>
+        <p id="pbDesc" class="muted"></p>
+      </div>
+      <div class="pb-version">
+        <span class="muted">Versão</span>
+        <strong id="pbVersion">—</strong>
+        <span id="pbDate" class="muted small"></span>
+      </div>
+      <p id="pbNotes" class="pb-notes" hidden></p>
+    </section>
+
+    <ol class="steps" id="steps">
+      <!-- 1. Placa -->
+      <li class="card step" id="stepBoard">
+        <h2 class="step-title"><span class="num"></span>Escolher a placa</h2>
+        <div class="board-options" role="radiogroup" aria-label="Placa">
+          <label class="board-opt">
+            <input type="radio" name="board" value="ESP32" checked>
+            <span class="board-card">
+              <strong>ESP32</strong>
+              <small>ESP32-WROOM / WROVER, DevKit V1…</small>
+            </span>
+          </label>
+          <label class="board-opt">
+            <input type="radio" name="board" value="ESP32-S3">
+            <span class="board-card">
+              <strong>ESP32-S3</strong>
+              <small>ESP32-S3-DevKitC, N8R2, N16R8…</small>
+            </span>
+          </label>
+          <label class="board-opt">
+            <input type="radio" name="board" value="auto">
+            <span class="board-card">
+              <strong>Automático</strong>
+              <small>Deteta o chip ao ligar</small>
+            </span>
+          </label>
+        </div>
+      </li>
+
+      <!-- 2. Firmware -->
+      <li class="card step" id="stepFirmware">
+        <h2 class="step-title"><span class="num"></span>Escolher o firmware (.bin)</h2>
+
+        <div id="localFw">
+          <label class="dropzone" id="dropzone">
+            <input type="file" id="fileInput" accept=".bin,application/octet-stream">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0l-4 4m4-4l4 4M4 16v3a1 1 0 001 1h14a1 1 0 001-1v-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span><b>Clique para escolher</b> ou arraste o ficheiro .bin para aqui</span>
+            <small class="muted">Recomendado: o ficheiro completo <code>…ino.merged.bin</code> do Arduino IDE</small>
+          </label>
+        </div>
+
+        <div id="catalogFw" hidden>
+          <p id="catalogFwText" class="muted">O firmware certo é descarregado automaticamente depois de ligar a placa.</p>
+        </div>
+
+        <div id="fwSummary" hidden></div>
+      </li>
+
+      <!-- 3. Ligar -->
+      <li class="card step" id="stepConnect">
+        <h2 class="step-title"><span class="num"></span>Ligar à placa (porta COM)</h2>
+        <p class="muted">Ligue a placa por USB e clique em <b>Ligar</b>. Na janela que abre, escolha a porta (ex.: <i>COM3</i>, <i>USB-SERIAL CH340</i>, <i>CP210x</i>, <i>USB JTAG/serial debug unit</i>).</p>
+        <div class="row">
+          <button class="btn btn-primary" id="btnConnect" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7V3m6 4V3M7 7h10v4a5 5 0 01-10 0V7zm5 9v5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            Ligar
+          </button>
+          <button class="btn" id="btnDisconnect" type="button" hidden>Desligar</button>
+          <label class="inline-field">Velocidade
+            <select id="baud">
+              <option value="115200">115200 (mais seguro)</option>
+              <option value="230400">230400</option>
+              <option value="460800" selected>460800 (recomendado)</option>
+              <option value="921600">921600 (mais rápido)</option>
+            </select>
+          </label>
+        </div>
+        <div id="connectMsg" class="msg" hidden></div>
+        <dl id="deviceInfo" class="kv" hidden></dl>
+      </li>
+
+      <!-- 4. Gravar -->
+      <li class="card step" id="stepFlash">
+        <h2 class="step-title"><span class="num"></span>Gravar e verificar</h2>
+        <label class="check">
+          <input type="checkbox" id="keepData" checked disabled>
+          <span>Manter os dados guardados na placa
+            <small class="muted">— definições (Wi-Fi, Preferences/NVS) e ficheiros SPIFFS/LittleFS</small>
+            <small id="keepDataNote" class="muted note"></small>
+          </span>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="eraseAll">
+          <span>Apagar toda a flash antes de gravar
+            <small class="muted">— resolve problemas de dados antigos, mas apaga também as definições guardadas (Wi-Fi, calibrações…)</small>
+          </span>
+        </label>
+        <ul id="checks" class="checks"></ul>
+        <div class="row">
+          <button class="btn btn-primary btn-lg" id="btnFlash" type="button" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3L5 13h6l-1 8 8-10h-6z" fill="currentColor"/></svg>
+            <span id="btnFlashText">Gravar e verificar</span>
+          </button>
+        </div>
+        <div id="progressWrap" class="progress-wrap" hidden>
+          <div class="progress"><div class="progress-bar" id="progressBar"></div></div>
+          <div class="progress-text"><span id="progressText">—</span><span id="progressPct">0%</span></div>
+        </div>
+        <div id="flashResult" class="msg" hidden></div>
+      </li>
+    </ol>
+
+    <details class="card" id="advanced">
+      <summary>Opções avançadas</summary>
+      <div class="adv-grid">
+        <label class="field">Endereço de gravação
+          <select id="addrMode">
+            <option value="auto" selected>Automático (recomendado)</option>
+            <option value="manual">Manual</option>
+          </select>
+        </label>
+        <label class="field">Endereço manual (hex)
+          <input type="text" id="addrInput" value="0x0" spellcheck="false" disabled>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="allPorts">
+          <span>Mostrar todas as portas série <small class="muted">(por defeito só aparecem adaptadores USB conhecidos: CP210x, CH340/CH9102, FTDI, ESP USB nativo)</small></span>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="ignoreChecks">
+          <span>Ignorar verificações de segurança <small class="muted">(chip / tamanho de flash — só se souber o que está a fazer)</small></span>
+        </label>
+      </div>
+    </details>
+
+    <section class="card" id="monitorCard">
+      <div class="card-head">
+        <h2>Monitor série</h2>
+        <div class="row tight">
+          <select id="monitorBaud" aria-label="Velocidade do monitor">
+            <option>9600</option><option>57600</option><option selected>115200</option><option>230400</option><option>460800</option><option>921600</option>
+          </select>
+          <button class="btn btn-sm" id="btnMonitor" type="button">Abrir</button>
+          <button class="btn btn-sm" id="btnReset" type="button" disabled>Reiniciar placa</button>
+          <button class="btn btn-sm" id="btnMonitorStop" type="button" disabled>Fechar</button>
+        </div>
+      </div>
+      <pre id="monitorOut" class="console" aria-live="off"></pre>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Registo</h2>
+        <div class="row tight">
+          <button class="btn btn-sm" id="btnCopyLog" type="button">Copiar</button>
+          <button class="btn btn-sm" id="btnClearLog" type="button">Limpar</button>
+        </div>
+      </div>
+      <pre id="log" class="console"></pre>
+    </section>
+
+    <section class="card" id="productsCard" hidden>
+      <div class="card-head"><h2>Firmwares disponíveis</h2></div>
+      <p class="muted">Cada produto tem um link próprio. Quem o abre só precisa de escolher a porta COM, e a última versão é instalada automaticamente.</p>
+      <div id="productList" class="product-list"></div>
+    </section>
+
+    <section class="card help">
+      <h2>Problemas comuns</h2>
+      <details>
+        <summary>A porta COM não aparece na lista</summary>
+        <ul>
+          <li>Use um cabo USB <b>de dados</b> (muitos cabos só carregam).</li>
+          <li>Instale o driver do adaptador USB da placa:
+            <a href="https://www.silabs.com/developer-tools/usb-to-uart-bridge-vcp-drivers" target="_blank" rel="noopener">CP210x (Silicon Labs)</a> ou
+            <a href="https://www.wch-ic.com/downloads/CH341SER_EXE.html" target="_blank" rel="noopener">CH340 / CH9102 (WCH)</a>.</li>
+          <li>Ative <i>Mostrar todas as portas série</i> em <i>Opções avançadas</i>.</li>
+        </ul>
+      </details>
+      <details>
+        <summary>“Não foi possível ligar” / a placa não entra em modo de programação</summary>
+        <ul>
+          <li>Mantenha premido o botão <b>BOOT</b> (ou IO0), carregue e solte <b>RESET</b> (EN/RST), solte <b>BOOT</b> e tente <b>Ligar</b> de novo.</li>
+          <li>No ESP32-S3 com USB nativo: mantenha <b>BOOT</b> premido enquanto liga o cabo USB.</li>
+        </ul>
+      </details>
+      <details>
+        <summary>“A porta está ocupada”</summary>
+        <ul><li>Feche o Arduino IDE (monitor série), outros programas de terminal e outros separadores com esta página.</li></ul>
+      </details>
+      <details>
+        <summary>A gravação falha a meio</summary>
+        <ul>
+          <li>Baixe a <b>Velocidade</b> para 115200 e tente novamente.</li>
+          <li>Evite hubs USB; ligue diretamente ao computador.</li>
+        </ul>
+      </details>
+      <details>
+        <summary>Depois de gravar, a placa não arranca</summary>
+        <ul>
+          <li>Carregue no botão <b>RESET</b> (EN/RST).</li>
+          <li>Repita a gravação com <i>Apagar toda a flash antes de gravar</i> ativo.</li>
+        </ul>
+      </details>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p><b>ESP32 Flash via WEB</b> — by Jorge Pinheiro</p>
+    <p class="muted small">O ficheiro escolhido não sai do seu computador: é gravado diretamente na placa pelo browser. Baseado em <a href="https://github.com/espressif/esptool-js" target="_blank" rel="noopener">esptool-js</a> (Espressif).</p>
+  </footer>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

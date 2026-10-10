@@ -1,0 +1,10 @@
+{
+  "name": "esp32-flash-via-web",
+  "private": true,
+  "description": "ESP32 Flash via WEB — by Jorge Pinheiro",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "publicar": "node tools/publicar-firmware.mjs"
+  }
+}

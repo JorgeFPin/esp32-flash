@@ -1,0 +1,28 @@
+{
+  "produtos": [
+    {
+      "id": "demo",
+      "nome": "Demo — Olá ESP32",
+      "descricao": "Firmware de teste: pisca o LED e escreve no monitor série (115200).",
+      "versoes": [
+        {
+          "versao": "1.0.0",
+          "data": "2026-10-09",
+          "notas": "Primeira versão de demonstração do ESP32 Flash via WEB.",
+          "ficheiros": {
+            "ESP32": {
+              "ficheiro": "demo/1.0.0/demo-v1.0.0-esp32.bin",
+              "tamanho": 4194304,
+              "md5": "664f908b8ce800361a5e18c22c296bf3"
+            },
+            "ESP32-S3": {
+              "ficheiro": "demo/1.0.0/demo-v1.0.0-esp32s3.bin",
+              "tamanho": 4194304,
+              "md5": "dbe64ee1ad4f6c006409216e55e185dd"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
